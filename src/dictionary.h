@@ -49,11 +49,11 @@ class Dictionary {
   std::vector<int32_t> word2int_;  // 单词及其对应的id
   std::vector<entry> words_;       // 单词的详细信息
 
-  std::vector<real> pdiscard_;
+  std::vector<real> pdiscard_;     // pdiscard_对应着字典中每个词word的被丢弃的概率
   int32_t size_;
-  int32_t nwords_;
-  int32_t nlabels_;
-  int64_t ntokens_;
+  int32_t nwords_;                 // 因为词和label都存储在words_里面，为了区分word和label，所以有这个参数，前部分为word部分，有nwords_个，并且按出现次数降序排序
+  int32_t nlabels_;                // 后一部分为label部分，nlables_个，也按出现次数降序排列
+  int64_t ntokens_;                // ntokens_是训练预料中word和label的总数量（包含重复次数，而且清理字典时，并不改变这个值）
 
   int64_t pruneidx_size_;
   std::unordered_map<int32_t, int32_t> pruneidx_;
