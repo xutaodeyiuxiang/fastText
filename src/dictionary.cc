@@ -175,6 +175,9 @@ void Dictionary::computeSubwords(
     std::vector<std::string>* substrings) const {
   for (size_t i = 0; i < word.size(); i++) {
     std::string ngram;
+    // 0xC0是1100 0000的十六进制表示，与某个字符进行"位与"操作后，就是提取这个字符的前两个bit位的数字，
+    // 如果结果为0x80（0100 0000），即该if代码的意思是如果字符word[i]的起始两位是01的话
+    // 主要用于判断是否是一个完整字符的开始，比如中文占两个字节
     if ((word[i] & 0xC0) == 0x80) {
       continue;
     }
@@ -184,6 +187,8 @@ void Dictionary::computeSubwords(
         ngram.push_back(word[j++]);
       }
       if (n >= args_->minn && !(n == 1 && (i == 0 || j == word.size()))) {
+        // ngram的序号是在词典所有词nwords_的后面。为ngram预留的容量是bucket（bucket初始化为2000000）。
+        // 如果两个ngram的hash值一样，则没有解决hash冲突，认为二者是一样的。
         int32_t h = hash(ngram) % args_->bucket;
         pushHash(ngrams, h);
         if (substrings) {
@@ -195,11 +200,16 @@ void Dictionary::computeSubwords(
 }
 
 void Dictionary::initNgrams() {
+  // 提取char ngram
   for (size_t i = 0; i < size_; i++) {
+    // 词前后分别添加前缀BOW（"<"）和后缀EOW(">")
     std::string word = BOW + words_[i].word + EOW;
     words_[i].subwords.clear();
+    //将word自身的编号先加入到ngram中去
     words_[i].subwords.push_back(i);
     if (words_[i].word != EOS) {
+      //读取训练预料构建字典时，每一行读完后，会将EOS（end of sentence）标识符"</s>"加入到字典中，所以字典中的EOS表示了训练预料的行数。
+      //所以，如果不是标识符EOS，则进行ngram的计算
       computeSubwords(word, words_[i].subwords);
     }
   }
@@ -231,6 +241,12 @@ bool Dictionary::readWord(std::istream& in, std::string& word) const {
   return !word.empty();
 }
 
+/*
+ * 成员函数readFromFile依次读取文件中的每一个word（成员函数readWord）（每个word的分隔符是空格或者tab等），
+ * 来加入到字典words_中（成员函数add）。每次加入时，先将word字符串hash映射映射成一个数h（成员函数hash），
+ * word2int_[h]标记了该word在words_中的位置，如果是第一次加入，word2int_[h]的初始值为-1，
+ * 将word追加到words_的末尾，再将word2int_[h]改为相应的下标。如果words_中也存在该word，只需要将相应的count加一即可。
+ */
 void Dictionary::readFromFile(std::istream& in) {
   std::string word;
   int64_t minThreshold = 1;
@@ -240,10 +256,14 @@ void Dictionary::readFromFile(std::istream& in) {
       std::cerr << "\rRead " << ntokens_ / 1000000 << "M words" << std::flush;
     }
     if (size_ > 0.75 * MAX_VOCAB_SIZE) {
+      // 随着word不断的加入，当词典的容量大于0.75*MAX_VOCAB_SIZE时，就需要对词典words_进行精简。
+      // 精简方式是有minThreshold控制的，初始为1，当超过阈值时，minThreshold就会增加1，然后出现次数少于minThreshold都会被删掉，
+      // 这是有成员函数theshold实现的
       minThreshold++;
       threshold(minThreshold, minThreshold);
     }
   }
+  
   threshold(args_->minCount, args_->minCountLabel);
   initTableDiscard();
   initNgrams();
@@ -259,12 +279,16 @@ void Dictionary::readFromFile(std::istream& in) {
 }
 
 void Dictionary::threshold(int64_t t, int64_t tl) {
+  // 将字典words_排序，排序的规则是把word拍在label的前面，然后在word和label类型中，都是从大到小排序。
+  // 即第一关键字是entry_type（word在前，label在后），第二关键字是count
   sort(words_.begin(), words_.end(), [](const entry& e1, const entry& e2) {
     if (e1.type != e2.type) {
       return e1.type < e2.type;
     }
     return e1.count > e2.count;
   });
+  // 将词出现次数小于阈值t的那些数remove到最后，然后删除。这样的话，依然是word在前（按出现次数从大到小排序），label在后，也是从大到小排序
+  // label同样用阈值tl去过滤
   words_.erase(
       remove_if(
           words_.begin(),
@@ -274,7 +298,7 @@ void Dictionary::threshold(int64_t t, int64_t tl) {
                 (e.type == entry_type::label && e.count < tl);
           }),
       words_.end());
-  words_.shrink_to_fit();
+  words_.shrink_to_fit(); //words_到合适大小
   size_ = 0;
   nwords_ = 0;
   nlabels_ = 0;
@@ -288,10 +312,13 @@ void Dictionary::threshold(int64_t t, int64_t tl) {
     if (it->type == entry_type::label) {
       nlabels_++;
     }
-  }
+  }//size_为整个词典words_的大小，nwords_为词典words_中word的数量，nlabels_为词典words_的数量，而且size_ = nwords_ + nlabels_
 }
 
 void Dictionary::initTableDiscard() {
+  // 调用成员函数initTableDiscard来对成员变量std::vector<float> pdiscard_进行赋值，pdiscard_对应着字典中每个词word的被丢弃的概率。
+  // p_word = sqrt(t / f_word) + (t / f_word), where f_word = count(word) / ntoken_
+  // 这个函数保证了出现次数多的单词被丢弃的概率更大，因为出现次数特别多的一些词，如the a is等等并没有实际意义，为训练噪音，可以适当丢弃加快训练。
   pdiscard_.resize(size_);
   for (size_t i = 0; i < size_; i++) {
     real f = real(words_[i].count) / real(ntokens_);
