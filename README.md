@@ -1,3 +1,5 @@
+# folk的目的是对代码做注释，并学习代码
+
 # fastText
 [fastText](https://fasttext.cc/) is a library for efficient learning of word representations and sentence classification.
 
