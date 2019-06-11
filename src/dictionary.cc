@@ -340,9 +340,11 @@ void Dictionary::addWordNgrams(
     std::vector<int32_t>& line,
     const std::vector<int32_t>& hashes,
     int32_t n) const {
+  // 将一行预料的words Ngram保存到line中,参数n为类Args的wordNgrams
   for (int32_t i = 0; i < hashes.size(); i++) {
     uint64_t h = hashes[i];
     for (int32_t j = i + 1; j < hashes.size() && j < i + n; j++) {
+      // 该行任意连续2个，连续3个，...,连续wordNgram个词都要hash映射，保存到line中
       h = h * 116049371 + hashes[j];
       pushHash(line, h % args_->bucket);
     }
@@ -354,13 +356,14 @@ void Dictionary::addSubwords(
     const std::string& token,
     int32_t wid) const {
   if (wid < 0) { // out of vocab
-    if (token != EOS) {
+    if (token != EOS) {  //将该未登录词的char ngram加入到word中
       computeSubwords(BOW + token + EOW, line);
     }
   } else {
     if (args_->maxn <= 0) { // in vocab w/o subwords
-      line.push_back(wid);
+      line.push_back(wid); //如果不用char ngram，则仅将该词在词典words_的序号保存到到line中
     } else { // in vocab w/ subwords
+      // 直接查词典words_中，word的ngrams，并保存到line中
       const std::vector<int32_t>& ngrams = getSubwords(wid);
       line.insert(line.end(), ngrams.cbegin(), ngrams.cend());
     }
@@ -374,6 +377,9 @@ void Dictionary::reset(std::istream& in) const {
   }
 }
 
+// cbow和skipgram模型服务
+// 第三个参数是一个随机数生成器，和pdiscard_结合，来随机放弃该行某个词，
+// 并且忽略每一行的label，不加入每个word的ngram信息（但在fasttext.c中，又加入到训练集中）
 int32_t Dictionary::getLine(
     std::istream& in,
     std::vector<int32_t>& words,
@@ -402,6 +408,8 @@ int32_t Dictionary::getLine(
   return ntokens;
 }
 
+// supervise模型服务
+// 第三个参数是label，用来返回分类标记lable（类型是std::<vector>，可以存储多个分类）
 int32_t Dictionary::getLine(
     std::istream& in,
     std::vector<int32_t>& words,
@@ -410,26 +418,28 @@ int32_t Dictionary::getLine(
   std::string token;
   int32_t ntokens = 0;
 
-  reset(in);
+  reset(in);  //如果文件读取结束，则从头开始读
   words.clear();
   labels.clear();
-  while (readWord(in, token)) {
-    uint32_t h = hash(token);
-    int32_t wid = getId(token, h);
-    entry_type type = wid < 0 ? getType(token) : getType(wid);
+  while (readWord(in, token)) { //每次读取一个word，word以空格或者tab为分隔符
+    uint32_t h = hash(token);   //获取当前word的hash值
+    int32_t wid = getId(token, h); //得到当前word的在词典words_的下标
+    entry_type type = wid < 0 ? getType(token) : getType(wid); 
+    //如果wid为负，则为未登录词，那么如果其中包含字符串"label"，则为label，否则为word。如果在词典中，直接查询其type
 
     ntokens++;
     if (type == entry_type::word) {
-      addSubwords(words, token, wid);
-      word_hashes.push_back(h);
+      addSubwords(words, token, wid); //将这个word的char ngram加入到变量words中
+      word_hashes.push_back(h);       //将这个word的hash值保存
     } else if (type == entry_type::label && wid >= 0) {
+      // 如果是label且该label在词典中，则将该label在words_中的序号保存到labels中返回
       labels.push_back(wid - nwords_);
     }
-    if (token == EOS) {
+    if (token == EOS) { //如果读到该行末尾，退出
       break;
     }
   }
-  addWordNgrams(words, word_hashes, args_->wordNgrams);
+  addWordNgrams(words, word_hashes, args_->wordNgrams); //将该行的词级别的Ngram加入到words中
   return ntokens;
 }
 
