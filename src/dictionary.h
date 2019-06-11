@@ -24,11 +24,12 @@ namespace fasttext {
 typedef int32_t id_type;
 enum class entry_type : int8_t { word = 0, label = 1 };
 
+// words_和word2int_, entry是在words中的一个数据项
 struct entry {
-  std::string word;
-  int64_t count;
-  entry_type type;
-  std::vector<int32_t> subwords;
+  std::string word;               //单词的字符串
+  int64_t count;                  //该单词在训练集中出现的次数
+  entry_type type;                //类型，word为0，文本分类的label为1
+  std::vector<int32_t> subwords;  //该词的ngram序列对应的下标
 };
 
 class Dictionary {
@@ -45,8 +46,8 @@ class Dictionary {
   void addSubwords(std::vector<int32_t>&, const std::string&, int32_t) const;
 
   std::shared_ptr<Args> args_;
-  std::vector<int32_t> word2int_;
-  std::vector<entry> words_;
+  std::vector<int32_t> word2int_;  // 单词及其对应的id
+  std::vector<entry> words_;       // 单词的详细信息
 
   std::vector<real> pdiscard_;
   int32_t size_;
