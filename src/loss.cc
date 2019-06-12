@@ -354,9 +354,9 @@ real SoftmaxLoss::forward(
     int32_t osz = wo_->size(0);
     for (int32_t i = 0; i < osz; i++) {
       real label = (i == target) ? 1.0 : 0.0;
-      real alpha = lr * (label - state.output[i]);  // 误差
-      state.grad.addRow(*wo_, i, alpha);            // 更新权重
-      wo_->addVectorToRow(state.hidden, i, alpha);
+      real alpha = lr * (label - state.output[i]);  // 误差，常量
+      state.grad.addRow(*wo_, i, alpha);            // wo_的第i行乘以alpha，累加到grad上, 相当于更新grad
+      wo_->addVectorToRow(state.hidden, i, alpha);  // hidden乘以alpha，加到wo_的第i行上，相当与更新wo_
     }
   }
   return -log(state.output[target]);
