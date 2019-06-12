@@ -113,12 +113,12 @@ class HierarchicalSoftmaxLoss : public BinaryLogisticLoss {
     int32_t left;
     int32_t right;
     int64_t count;
-    bool binary;
+    bool binary;    // 是否是叶子节点
   };
 
   std::vector<std::vector<int32_t>> paths_;
   std::vector<std::vector<bool>> codes_;
-  std::vector<Node> tree_;
+  std::vector<Node> tree_;  // 霍夫曼树
   int32_t osz_;
   void buildTree(const std::vector<int64_t>& counts);
   void dfs(
