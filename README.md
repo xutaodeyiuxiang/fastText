@@ -1,5 +1,11 @@
 # folk的目的是对代码做注释，并学习代码
 
+## 一些提升效果的方法
+预处理数据 ;
+改变迭代次数 (使用选项 -epoch, 标准范围 [5 - 50]) ;
+改变学习速率 (使用选项 -lr, 标准范围 [0.1 - 1.0]) ;
+使用 word n-grams (使用选项 -wordNgrams, 标准范围 [1 - 5]).
+
 # fastText
 [fastText](https://fasttext.cc/) is a library for efficient learning of word representations and sentence classification.
 
