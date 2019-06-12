@@ -354,6 +354,7 @@ void FastText::quantize(const Args& qargs) {
   model_ = std::make_shared<Model>(input_, output_, loss, normalizeGradient);
 }
 
+// 先从模型中拿出一个状态（参数）， 然后直接梯度下降，更新模型model_, 这个是线程共享的
 void FastText::supervised(
     Model::State& state,
     real lr,
@@ -365,6 +366,9 @@ void FastText::supervised(
   if (args_->loss == loss_name::ova) {
     model_->update(line, labels, Model::kAllLabelsAsTarget, lr, state);
   } else {
+    // 因为一个句子可以打上多个 label，但是 fastText 的架构实际上只有支持一个 label
+    // 所以这里随机选择一个 label 来更新模型，这样做会让其它 label 被忽略
+    // 所以 fastText 不太适合做多标签的分类
     std::uniform_int_distribution<> uniform(0, labels.size() - 1);
     int32_t i = uniform(state.rng);
     model_->update(line, labels, i, lr, state);
@@ -377,9 +381,12 @@ void FastText::cbow(
     const std::vector<int32_t>& line) {
   std::vector<int32_t> bow;
   std::uniform_int_distribution<> uniform(1, args_->ws);
+  // 在一个句子中，每个词可以进行一次 update
   for (int32_t w = 0; w < line.size(); w++) {
+    // 一个词的上下文长度是随机产生的,但是上限是windows size
     int32_t boundary = uniform(state.rng);
     bow.clear();
+    // 以当前词为中心，将左右 boundary 个词加入 input
     for (int32_t c = -boundary; c <= boundary; c++) {
       if (c != 0 && w + c >= 0 && w + c < line.size()) {
         const std::vector<int32_t>& ngrams = dict_->getSubwords(line[w + c]);
@@ -649,16 +656,23 @@ void FastText::analogies(int32_t k) {
 }
 
 void FastText::trainThread(int32_t threadId) {
+  // !!!!!!一哄而上的并行训练：每个训练线程在更新参数时并没有加锁，这会给参数更新带来一些噪音，但是不会影响最终的结果。
+  // 无论是 google 的 word2vec 实现，还是 fastText 库，都没有加锁。 
+   
+  // 根据线程数，将训练文件按照总字节数（utils::size）均分成多个部分
+  // 这么做的一个后果是，每一部分的第一个词有可能从中间被切断，
+  // 这样的"小噪音"对于整体的训练结果无影响
   std::ifstream ifs(args_->input);
   utils::seek(ifs, threadId * utils::size(ifs) / args_->thread);
 
   Model::State state(args_->dim, output_->size(0), threadId);
 
   const int64_t ntokens = dict_->ntokens();
-  int64_t localTokenCount = 0;
+  int64_t localTokenCount = 0; // 当前线程处理完毕的 token 总数
   std::vector<int32_t> line, labels;
   while (tokenCount_ < args_->epoch * ntokens) {
     real progress = real(tokenCount_) / (args_->epoch * ntokens);
+    // 学习率根据 progress 线性下降
     real lr = args_->lr * (1.0 - progress);
     if (args_->model == model_name::sup) {
       localTokenCount += dict_->getLine(ifs, line, labels);
@@ -671,8 +685,11 @@ void FastText::trainThread(int32_t threadId) {
       skipgram(state, lr, line);
     }
     if (localTokenCount > args_->lrUpdateRate) {
+      // 每个线程学习率的变化率，默认为 100
+      // 它的作用是，每处理一定的行数，再更新全局的 tokenCount 变量，从而影响学习率
       tokenCount_ += localTokenCount;
       localTokenCount = 0;
+      // 0 号线程负责将训练进度输出到屏幕
       if (threadId == 0 && args_->verbose > 1)
         loss_ = state.getLoss();
     }
@@ -761,17 +778,30 @@ void FastText::train(const Args& args) {
     throw std::invalid_argument(
         args_->input + " cannot be opened for training!");
   }
+  // 根据输入文件初始化词典
   dict_->readFromFile(ifs);
   ifs.close();
-
+  // 初始化输入层, 对于普通 word2vec，输入层就是一个词向量的查找表，
+  // 所以它的大小为 nwords 行，dim 列（dim 为词向量的长度），但是 fastText 用了
+  // word n-gram 作为输入，所以输入矩阵的大小为 (nwords + ngram 种类) * dim
+  // 代码中，所有 word n-gram 都被 hash 到固定数目的 bucket 中，所以输入矩阵的大小为
+  // (nwords + bucket 个数) * dim
   if (!args_->pretrainedVectors.empty()) {
     input_ = getInputMatrixFromFile(args_->pretrainedVectors);
   } else {
     input_ = createRandomMatrix();
   }
+  // 初始化输出层，输出层无论是用负采样，层次 softmax，还是普通 softmax，
+  // 对于每种可能的输出，都有一个 dim 维的参数向量与之对应
+  // 当 args_->model == model_name::sup 时，训练分类器，
+  // 所以输出的种类是标签总数 dict_->nlabels()
+  // 否则训练的是词向量，输出种类就是词的种类 dict_->nwords()
   output_ = createTrainOutputMatrix();
+  // 创建loss
   auto loss = createLoss(output_);
+  // 是否使用normalize gradient learner
   bool normalizeGradient = (args_->model == model_name::sup);
+  // 创建模型
   model_ = std::make_shared<Model>(input_, output_, loss, normalizeGradient);
   startThreads();
 }
@@ -781,14 +811,18 @@ void FastText::startThreads() {
   tokenCount_ = 0;
   loss_ = -1;
   std::vector<std::thread> threads;
+  // 多线程训练
   for (int32_t i = 0; i < args_->thread; i++) {
     threads.push_back(std::thread([=]() { trainThread(i); }));
   }
-  const int64_t ntokens = dict_->ntokens();
+  const int64_t ntokens = dict_->ntokens(); // 训练文件中的 token 总数
   // Same condition as trainThread
   while (tokenCount_ < args_->epoch * ntokens) {
     std::this_thread::sleep_for(std::chrono::milliseconds(100));
     if (loss_ >= 0 && args_->verbose > 1) {
+      // tokenCount 为所有线程处理完毕的 token 总数
+      // 当处理了 args_->epoch 遍所有 token 后，训练结束
+      // progress = 0 ~ 1，代表当前训练进程，随着训练的进行逐渐增大
       real progress = real(tokenCount_) / (args_->epoch * ntokens);
       std::cerr << "\r";
       printInfo(progress, loss_, std::cerr);
