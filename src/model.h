@@ -24,8 +24,8 @@ class Loss;
 
 class Model {
  protected:
-  std::shared_ptr<Matrix> wi_;
-  std::shared_ptr<Matrix> wo_;
+  std::shared_ptr<Matrix> wi_;   // 词向量，包含word, char ngram, word ngram, 大小是nword + bucket
+  std::shared_ptr<Matrix> wo_;   // 输出矩阵，根据不同算法，输出矩阵各不相同 （以词或者label作为行号）
   std::shared_ptr<Loss> loss_;
   bool normalizeGradient_;
 
